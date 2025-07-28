@@ -1,37 +1,41 @@
 const express = require('express');
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// CORS middleware to allow requests from any origin
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*"); // Allow all origins (for testing)
+  res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.sendStatus(204); // Handle preflight
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
-app.use(express.json()); // Middleware to parse JSON body
+app.use(express.json());
 
-// Dummy order numbers to simulate validation
-const dummyOrders = ['1001', '1002', '1234', '5678'];
+// Example dummy orders
+const dummyOrders = [
+  { orderNumber: '1001', emailOrZip: 'example@mail.com' },
+  { orderNumber: '1002', emailOrZip: '1011AB' },
+];
 
-// Route for validating order number
 app.post('/api/validate-order', (req, res) => {
-  const { orderNumber } = req.body;
+  const { orderNumber, emailOrZip } = req.body;
 
-  if (!orderNumber) {
-    return res.status(400).json({ error: "Missing orderNumber" });
+  if (!orderNumber || !emailOrZip) {
+    return res.status(400).json({ error: "Missing fields" });
   }
 
-  if (dummyOrders.includes(orderNumber)) {
+  const found = dummyOrders.find(order =>
+    order.orderNumber === orderNumber && order.emailOrZip.toLowerCase() === emailOrZip.toLowerCase()
+  );
+
+  if (found) {
     res.json({ found: true });
   } else {
     res.json({ found: false });
   }
 });
 
-// Start the server
 app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
+  console.log(`✅ Server running on http://localhost:${PORT}`);
 });
