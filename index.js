@@ -24,7 +24,8 @@ app.post('/api/validate-order', async (req, res) => {
   }
 
   try {
-const orderQuery = `#${orderNumber}`;
+    const orderQuery = `#${orderNumber}`;
+    console.log(`🔎 Fetching: https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`);
 
     const response = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`,
@@ -35,6 +36,8 @@ const orderQuery = `#${orderNumber}`;
         },
       }
     );
+
+    console.log('✅ Shopify response:', response.data);
 
     const orders = response.data.orders;
     if (orders.length === 0) {
@@ -47,6 +50,7 @@ const orderQuery = `#${orderNumber}`;
       order.shipping_address?.zip?.replace(/\s/g, '') === emailOrZip.replace(/\s/g, '');
 
     res.json({ found: match });
+
   } catch (err) {
     console.error('🔴 Full error:', err);
     console.error('🔴 Shopify API error:', err.response?.data || err.message);
