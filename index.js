@@ -24,7 +24,7 @@ app.post('/api/validate-order', async (req, res) => {
   }
 
   try {
-    const orderQuery = orderNumber;
+const orderQuery = `#${orderNumber}`;
 
     const response = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`,
