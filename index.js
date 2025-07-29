@@ -24,12 +24,10 @@ app.post('/api/validate-order', async (req, res) => {
   }
 
   try {
-    const orderQuery = orderNumber; 
+    const orderQuery = orderNumber;
 
     const response = await axios.get(
-  `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`,
-  ...
-);
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`,
       {
         headers: {
           'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -50,12 +48,11 @@ app.post('/api/validate-order', async (req, res) => {
 
     res.json({ found: match });
   } catch (err) {
-  console.error('🔴 Full error:', err); 
-  console.error('🔴 Shopify API error:', err.response?.data || err.message);
-  res.status(500).json({ error: 'Error validating order' });
-}
+    console.error('🔴 Full error:', err);
+    console.error('🔴 Shopify API error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Error validating order' });
+  }
 });
-
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
