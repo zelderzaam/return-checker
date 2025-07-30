@@ -29,18 +29,25 @@ app.post('/api/validate-order', async (req, res) => {
     return res.status(400).json({ error: 'Missing fields' });
   }
 
+  // Validate environment variables
+  if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
+    console.error('❌ Missing environment variables');
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
   try {
     // Clean the order number (remove # if present)
     const cleanedOrderNumber = cleanOrderNumber(orderNumber);
     console.log(`🔍 Searching for order: "${cleanedOrderNumber}" (original: "${orderNumber}")`);
+    console.log(`🏪 Using store: ${SHOPIFY_STORE}`);
 
     let order = null;
     
-    // Approach 1: Search without # prefix (most common case)
-    console.log('🔍 Approach 1: Searching without # prefix...');
+    // Approach 1: Search with # prefix (most reliable for Shopify)
+    console.log('🔍 Approach 1: Searching with # prefix...');
     try {
       const response = await axios.get(
-        `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any`,
+        `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent('#' + cleanedOrderNumber)}&status=any`,
         {
           headers: {
             'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -58,12 +65,12 @@ app.post('/api/validate-order', async (req, res) => {
       console.log('⚠️ Approach 1 failed:', err.response?.data || err.message);
     }
 
-    // Approach 2: Search with # prefix (fallback)
+    // Approach 2: Search without # prefix (fallback)
     if (!order) {
-      console.log('🔍 Approach 2: Searching with # prefix...');
+      console.log('🔍 Approach 2: Searching without # prefix...');
       try {
         const response = await axios.get(
-          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent('#' + cleanedOrderNumber)}&status=any`,
+          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any`,
           {
             headers: {
               'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -73,7 +80,7 @@ app.post('/api/validate-order', async (req, res) => {
         );
         
         console.log(`📊 Found ${response.data.orders.length} orders with approach 2`);
-        if (response.data.orders.length === 1) {
+        if (response.data.orders.length > 0) {
           order = response.data.orders[0];
           console.log('✅ Order found via approach 2');
         }
@@ -119,7 +126,7 @@ app.post('/api/validate-order', async (req, res) => {
       return res.json({ found: false });
     }
 
-    console.log('✅ Shopify response - Order found:', {
+    console.log('✅ Order found:', {
       name: order.name,
       email: order.email,
       zip: order.shipping_address?.zip
@@ -127,15 +134,13 @@ app.post('/api/validate-order', async (req, res) => {
 
     // Validate email or ZIP
     console.log('🔍 Validating email/ZIP...');
-  const normalize = str => (str || '').toLowerCase().trim();
-const stripSpaces = str => (str || '').replace(/\s/g, '').toLowerCase().trim();
+    const orderEmail = order.email?.toLowerCase() || '';
+    const orderZip = order.shipping_address?.zip?.replace(/\s/g, '') || '';
+    const providedEmail = emailOrZip.toLowerCase();
+    const providedZip = emailOrZip.replace(/\s/g, '');
 
-const emailMatch = normalize(order.email) === normalize(emailOrZip);
-const zipMatch = stripSpaces(order.shipping_address?.zip) === stripSpaces(emailOrZip);
-
-console.log('📧 Email comparison:', normalize(order.email), '===', normalize(emailOrZip), '→', emailMatch);
-console.log('📮 ZIP comparison:', stripSpaces(order.shipping_address?.zip), '===', stripSpaces(emailOrZip), '→', zipMatch);
-
+    const emailMatch = orderEmail === providedEmail;
+    const zipMatch = orderZip === providedZip;
 
     console.log('📧 Email comparison:', orderEmail, '===', providedEmail, '→', emailMatch);
     console.log('📮 ZIP comparison:', orderZip, '===', providedZip, '→', zipMatch);
@@ -154,6 +159,7 @@ console.log('📮 ZIP comparison:', stripSpaces(order.shipping_address?.zip), '=
     console.error('🔴 Unexpected error:', err);
     console.error('🔴 Error details:', err.response?.data);
     console.error('🔴 Error status:', err.response?.status);
+    console.error('🔴 Error headers:', err.response?.headers);
     res.status(500).json({ error: 'Error validating order' });
   }
 });
@@ -166,6 +172,10 @@ app.get('/api/health', (req, res) => {
     environment: {
       shopifyStore: SHOPIFY_STORE ? '✅ Set' : '❌ Missing',
       accessToken: SHOPIFY_ACCESS_TOKEN ? '✅ Set' : '❌ Missing'
+    },
+    config: {
+      store: SHOPIFY_STORE,
+      tokenPrefix: SHOPIFY_ACCESS_TOKEN ? SHOPIFY_ACCESS_TOKEN.substring(0, 10) + '...' : 'Not set'
     }
   });
 });
@@ -174,11 +184,16 @@ app.get('/api/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({ 
     message: 'Shopify Return Form API Server',
-    status: 'running'
+    status: 'running',
+    endpoints: {
+      validate: 'POST /api/validate-order',
+      health: 'GET /api/health'
+    }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
   console.log(`🏪 Connected to Shopify store: ${SHOPIFY_STORE}`);
+  console.log(`🔑 Access token: ${SHOPIFY_ACCESS_TOKEN ? 'Configured' : 'Missing'}`);
 });
