@@ -16,6 +16,12 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+// Helper function to clean order number
+function cleanOrderNumber(orderNumber) {
+  if (!orderNumber) return '';
+  return orderNumber.toString().replace(/^#/, '');
+}
+
 app.post('/api/validate-order', async (req, res) => {
   const { orderNumber, emailOrZip } = req.body;
 
@@ -24,40 +30,153 @@ app.post('/api/validate-order', async (req, res) => {
   }
 
   try {
-    const orderQuery = `#${orderNumber}`;
-    console.log(`🔎 Fetching: https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`);
+    // Clean the order number (remove # if present)
+    const cleanedOrderNumber = cleanOrderNumber(orderNumber);
+    console.log(`🔍 Searching for order: "${cleanedOrderNumber}" (original: "${orderNumber}")`);
 
-    const response = await axios.get(
-      `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderQuery)}`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-          'Content-Type': 'application/json',
-        },
+    let order = null;
+    
+    // Approach 1: Search without # prefix (most common case)
+    console.log('🔍 Approach 1: Searching without # prefix...');
+    try {
+      const response = await axios.get(
+        `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any`,
+        {
+          headers: {
+            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      
+      console.log(`📊 Found ${response.data.orders.length} orders with approach 1`);
+      if (response.data.orders.length > 0) {
+        order = response.data.orders[0];
+        console.log('✅ Order found via approach 1');
       }
-    );
+    } catch (err) {
+      console.log('⚠️ Approach 1 failed:', err.response?.data || err.message);
+    }
 
-    console.log('✅ Shopify response:', response.data);
+    // Approach 2: Search with # prefix (fallback)
+    if (!order) {
+      console.log('🔍 Approach 2: Searching with # prefix...');
+      try {
+        const response = await axios.get(
+          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent('#' + cleanedOrderNumber)}&status=any`,
+          {
+            headers: {
+              'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        
+        console.log(`📊 Found ${response.data.orders.length} orders with approach 2`);
+        if (response.data.orders.length === 1) {
+          order = response.data.orders[0];
+          console.log('✅ Order found via approach 2');
+        }
+      } catch (err) {
+        console.log('⚠️ Approach 2 failed:', err.response?.data || err.message);
+      }
+    }
 
-    const orders = response.data.orders;
-    if (orders.length === 0) {
+    // Approach 3: Manual search through recent orders (last resort)
+    if (!order) {
+      console.log('🔍 Approach 3: Manual search through recent orders...');
+      try {
+        const response = await axios.get(
+          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?limit=250&status=any`,
+          {
+            headers: {
+              'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        
+        console.log(`📊 Searching through ${response.data.orders.length} recent orders`);
+        
+        // Look for order with matching name
+        order = response.data.orders.find(o => {
+          const orderName = o.name || '';
+          const cleanOrderName = orderName.replace(/^#/, '');
+          return cleanOrderName === cleanedOrderNumber || orderName === '#' + cleanedOrderNumber;
+        });
+        
+        if (order) {
+          console.log('✅ Order found via approach 3');
+        }
+      } catch (err) {
+        console.log('⚠️ Approach 3 failed:', err.response?.data || err.message);
+      }
+    }
+
+    // If no order found after all attempts
+    if (!order) {
+      console.log('❌ Order not found after all search attempts');
       return res.json({ found: false });
     }
 
-    const order = orders[0];
-    const match =
-      order.email?.toLowerCase() === emailOrZip.toLowerCase() ||
-      order.shipping_address?.zip?.replace(/\s/g, '') === emailOrZip.replace(/\s/g, '');
+    console.log('✅ Shopify response - Order found:', {
+      name: order.name,
+      email: order.email,
+      zip: order.shipping_address?.zip
+    });
+
+    // Validate email or ZIP
+    console.log('🔍 Validating email/ZIP...');
+    const orderEmail = order.email?.toLowerCase() || '';
+    const orderZip = order.shipping_address?.zip?.replace(/\s/g, '') || '';
+    const providedEmail = emailOrZip.toLowerCase();
+    const providedZip = emailOrZip.replace(/\s/g, '');
+
+    const emailMatch = orderEmail === providedEmail;
+    const zipMatch = orderZip === providedZip;
+
+    console.log('📧 Email comparison:', orderEmail, '===', providedEmail, '→', emailMatch);
+    console.log('📮 ZIP comparison:', orderZip, '===', providedZip, '→', zipMatch);
+
+    const match = emailMatch || zipMatch;
+    
+    if (match) {
+      console.log('✅ Validation successful');
+    } else {
+      console.log('❌ Validation failed - no email or ZIP match');
+    }
 
     res.json({ found: match });
 
   } catch (err) {
-    console.error('🔴 Full error:', err);
-    console.error('🔴 Shopify API error:', err.response?.data || err.message);
+    console.error('🔴 Unexpected error:', err);
+    console.error('🔴 Error details:', err.response?.data);
+    console.error('🔴 Error status:', err.response?.status);
     res.status(500).json({ error: 'Error validating order' });
   }
 });
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    environment: {
+      shopifyStore: SHOPIFY_STORE ? '✅ Set' : '❌ Missing',
+      accessToken: SHOPIFY_ACCESS_TOKEN ? '✅ Set' : '❌ Missing'
+    }
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Shopify Return Form API Server',
+    status: 'running'
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
+  console.log(`🏪 Connected to Shopify store: ${SHOPIFY_STORE}`);
 });
