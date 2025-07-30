@@ -127,13 +127,15 @@ app.post('/api/validate-order', async (req, res) => {
 
     // Validate email or ZIP
     console.log('🔍 Validating email/ZIP...');
-    const orderEmail = order.email?.toLowerCase() || '';
-    const orderZip = order.shipping_address?.zip?.replace(/\s/g, '') || '';
-    const providedEmail = emailOrZip.toLowerCase();
-    const providedZip = emailOrZip.replace(/\s/g, '');
+  const normalize = str => (str || '').toLowerCase().trim();
+const stripSpaces = str => (str || '').replace(/\s/g, '').toLowerCase().trim();
 
-    const emailMatch = orderEmail === providedEmail;
-    const zipMatch = orderZip === providedZip;
+const emailMatch = normalize(order.email) === normalize(emailOrZip);
+const zipMatch = stripSpaces(order.shipping_address?.zip) === stripSpaces(emailOrZip);
+
+console.log('📧 Email comparison:', normalize(order.email), '===', normalize(emailOrZip), '→', emailMatch);
+console.log('📮 ZIP comparison:', stripSpaces(order.shipping_address?.zip), '===', stripSpaces(emailOrZip), '→', zipMatch);
+
 
     console.log('📧 Email comparison:', orderEmail, '===', providedEmail, '→', emailMatch);
     console.log('📮 ZIP comparison:', orderZip, '===', providedZip, '→', zipMatch);
