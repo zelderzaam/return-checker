@@ -28,9 +28,6 @@ app.post('/api/validate-order', async (req, res) => {
   if (!orderNumber || !emailOrZip) {
     return res.status(400).json({ error: 'Missing fields' });
   }
-  console.log('🔍 Raw order object:', JSON.stringify(order, null, 2));
-
-
 
   // Validate environment variables
   if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
@@ -147,6 +144,8 @@ app.post('/api/validate-order', async (req, res) => {
 
     console.log('📧 Email comparison:', orderEmail, '===', providedEmail, '→', emailMatch);
     console.log('📮 ZIP comparison:', orderZip, '===', providedZip, '→', zipMatch);
+    console.log('🔍 Raw order object:', JSON.stringify(order, null, 2));
+
 
     const match = emailMatch || zipMatch;
     
