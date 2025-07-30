@@ -47,7 +47,7 @@ app.post('/api/validate-order', async (req, res) => {
     console.log('🔍 Approach 1: Searching with # prefix...');
     try {
       const response = await axios.get(
-        `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent('#' + cleanedOrderNumber)}&status=any`,
+        `https://2s0gry-ap.myshopify.com/admin/api/2024-01/orders.json?name=${encodeURIComponent('#' + cleanedOrderNumber)}&status=any`,
         {
           headers: {
             'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -70,7 +70,7 @@ app.post('/api/validate-order', async (req, res) => {
       console.log('🔍 Approach 2: Searching without # prefix...');
       try {
         const response = await axios.get(
-          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any`,
+          `https://2s0gry-ap.myshopify.com/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any`,
           {
             headers: {
               'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -94,7 +94,7 @@ app.post('/api/validate-order', async (req, res) => {
       console.log('🔍 Approach 3: Manual search through recent orders...');
       try {
         const response = await axios.get(
-          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?limit=250&status=any`,
+          `https://2s0gry-ap.myshopify.com/admin/api/2024-01/orders.json?limit=250&status=any`,
           {
             headers: {
               'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -170,11 +170,11 @@ app.get('/api/health', (req, res) => {
     status: 'healthy', 
     timestamp: new Date().toISOString(),
     environment: {
-      shopifyStore: SHOPIFY_STORE ? '✅ Set' : '❌ Missing',
+      shopifyStore: '2s0gry-ap.myshopify.com' ? '✅ Set' : '❌ Missing',
       accessToken: SHOPIFY_ACCESS_TOKEN ? '✅ Set' : '❌ Missing'
     },
     config: {
-      store: SHOPIFY_STORE,
+      store: '2s0gry-ap.myshopify.com',
       tokenPrefix: SHOPIFY_ACCESS_TOKEN ? SHOPIFY_ACCESS_TOKEN.substring(0, 10) + '...' : 'Not set'
     }
   });
@@ -194,6 +194,6 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
-  console.log(`🏪 Connected to Shopify store: ${SHOPIFY_STORE}`);
+  console.log(`🏪 Connected to Shopify store: 2s0gry-ap.myshopify.com`);
   console.log(`🔑 Access token: ${SHOPIFY_ACCESS_TOKEN ? 'Configured' : 'Missing'}`);
 });
