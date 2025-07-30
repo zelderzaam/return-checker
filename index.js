@@ -127,6 +127,7 @@ app.post('/api/validate-order', async (req, res) => {
 
   console.log('📧 Email comparison:', orderEmail, '===', providedEmail, '→', emailMatch);
   console.log('📮 ZIP comparison:', orderZip, '===', providedZip, '→', zipMatch);
+  console.log('🧾 Full order object:\n', JSON.stringify(order, null, 2));
 
   const match = emailMatch || zipMatch;
 
