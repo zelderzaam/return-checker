@@ -28,6 +28,9 @@ app.post('/api/validate-order', async (req, res) => {
   if (!orderNumber || !emailOrZip) {
     return res.status(400).json({ error: 'Missing fields' });
   }
+  console.log('🔍 Raw order object:', JSON.stringify(order, null, 2));
+
+
 
   // Validate environment variables
   if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
@@ -94,7 +97,7 @@ app.post('/api/validate-order', async (req, res) => {
       console.log('🔍 Approach 3: Manual search through recent orders...');
       try {
         const response = await axios.get(
-          `https://2s0gry-ap.myshopify.com/admin/api/2024-01/orders.json?name=${encodeURIComponent(orderNumber)}&status=any&fields=name,email,shipping_address`,
+          `https://${SHOPIFY_STORE}/admin/api/2024-01/orders.json?name=${encodeURIComponent(cleanedOrderNumber)}&status=any&fields=name,email,shipping_address`,
           {
             headers: {
               'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
