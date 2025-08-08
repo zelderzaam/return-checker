@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: return-checker
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 18
