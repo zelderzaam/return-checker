@@ -3,16 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
+    "start": "node src/index-multi.js",
+    "dev": "nodemon src/index-multi.js",
     "render-build": "echo \"no build step\""
   },
   "dependencies": {
     "@shopify/shopify-api": "^11.4.0",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "ioredis": "^5.7.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
