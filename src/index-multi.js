@@ -4,6 +4,7 @@ require('@shopify/shopify-api/adapters/node');
 
 const express = require('express');
 const { shopifyApi, LATEST_API_VERSION } = require('@shopify/shopify-api');
+const Redis = require('ioredis');
 
 const app = express();
 app.use(express.json());
@@ -14,12 +15,53 @@ const {
   SCOPES,
   HOST,
   PORT = 3000,
+  REDIS_URL, // <— add this in Render env
 } = process.env;
 
 // Fail fast if env is missing
 ['SHOPIFY_API_KEY', 'SHOPIFY_API_SECRET', 'SCOPES', 'HOST'].forEach((k) => {
   if (!process.env[k]) console.error(`❌ Missing env: ${k}`);
 });
+
+// ---------- Token Store (Redis if available; memory fallback) ----------
+let store;
+if (REDIS_URL) {
+  const redis = new Redis(REDIS_URL, {
+    // Using internal redis:// on Render (no TLS). If you ever use rediss://, TLS is automatic.
+    lazyConnect: true,
+  });
+  redis.on('error', (e) => console.error('Redis error:', e));
+
+  store = {
+    async saveToken(shop, token) {
+      await redis.set(`shop:token:${shop}`, token);
+      await redis.sadd('shops', shop);
+    },
+    async getToken(shop) {
+      return redis.get(`shop:token:${shop}`);
+    },
+    async listShops() {
+      return redis.smembers('shops');
+    },
+  };
+  console.log('🔗 Token store: Redis');
+} else {
+  const mem = new Map();
+  const shops = new Set();
+  store = {
+    async saveToken(shop, token) {
+      mem.set(shop, token);
+      shops.add(shop);
+    },
+    async getToken(shop) {
+      return mem.get(shop);
+    },
+    async listShops() {
+      return Array.from(shops);
+    },
+  };
+  console.log('💾 Token store: In-memory (set REDIS_URL to persist)');
+}
 
 // Shopify SDK init
 const hostName = (HOST || process.env.RENDER_EXTERNAL_URL || '')
@@ -34,11 +76,6 @@ const shopify = shopifyApi({
   apiVersion: LATEST_API_VERSION,
   isEmbeddedApp: false,
 });
-
-// Token store (memory for dev; use DB in prod)
-const tokenStore = new Map();
-const saveToken = (shop, token) => tokenStore.set(shop, token);
-const getToken = (shop) => tokenStore.get(shop);
 
 // CORS (simple)
 app.use((req, res, next) => {
@@ -80,7 +117,7 @@ app.get('/auth/callback', async (req, res) => {
       rawRequest: req,
       rawResponse: res,
     });
-    saveToken(session.shop, session.accessToken);
+    await store.saveToken(session.shop, session.accessToken); // <— now async
     console.log(`✅ Installed on ${session.shop}. Token saved.`);
     res.redirect(`/installed?shop=${encodeURIComponent(session.shop)}`);
   } catch (e) {
@@ -95,7 +132,13 @@ app.get('/installed', (req, res) => {
 });
 
 // ---------- API ----------
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let installedShops = [];
+  try {
+    installedShops = await store.listShops();
+  } catch (e) {
+    console.warn('listShops failed:', e.message);
+  }
   res.json({
     status: 'healthy',
     time: new Date().toISOString(),
@@ -104,8 +147,9 @@ app.get('/api/health', (req, res) => {
       apiSecret: !!SHOPIFY_API_SECRET,
       host: HOST,
       scopes: SCOPES,
+      redis: !!REDIS_URL,
     },
-    installedShops: Array.from(tokenStore.keys()),
+    installedShops,
   });
 });
 
@@ -119,7 +163,7 @@ app.post('/api/validate-order', async (req, res) => {
       return res.status(400).json({ error: 'Missing fields: orderNumber, emailOrZip' });
     }
 
-    const accessToken = getToken(shop);
+    const accessToken = await store.getToken(shop); // <— now async
     if (!accessToken) {
       return res.status(401).json({ error: `Shop ${shop} not authorized. Visit ${HOST}/auth?shop=${shop}` });
     }
@@ -142,7 +186,6 @@ app.post('/api/validate-order', async (req, res) => {
       return resp.json();
     };
 
-    // Try with and without '#'
     try {
       const data = await doSearch('#' + cleaned);
       if (data.orders?.length) order = data.orders[0];
