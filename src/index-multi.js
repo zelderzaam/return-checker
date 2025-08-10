@@ -18,17 +18,16 @@ const {
   PORT = 3000,
   REDIS_URL,
   ALLOWED_ORIGINS = "",
-  RATE_IP_MAX_PER_MIN = "60",     // optional, env overrides
-  RATE_ID_MAX_PER_HOUR = "30"
+  RATE_IP_MAX_PER_MIN = "60",
+  RATE_ID_MAX_PER_HOUR = "30",
 } = process.env;
 
-// Log missing envs (don’t crash)
+// Log missing (don’t crash)
 ['SHOPIFY_API_KEY', 'SHOPIFY_API_SECRET', 'SCOPES', 'HOST'].forEach(k => {
   if (!process.env[k]) console.error(`❌ Missing env: ${k}`);
 });
 
-// ---------- Body parsers ----------
-// Keep raw body for webhooks (HMAC). For other routes, JSON as usual.
+// ---------- Body parser (keep raw for webhooks) ----------
 app.use(express.json({
   verify: (req, res, buf) => {
     if (req.originalUrl.startsWith('/webhooks/')) req.rawBody = buf;
@@ -36,7 +35,7 @@ app.use(express.json({
 }));
 
 // ---------- Token Store (Redis if available; memory fallback) ----------
-let redis;            // expose client for rate limiting
+let redis;
 let store;
 if (REDIS_URL) {
   redis = new Redis(REDIS_URL, { lazyConnect: true });
@@ -56,7 +55,7 @@ if (REDIS_URL) {
     },
     async listShops() {
       return redis.smembers('shops');
-    }
+    },
   };
   console.log('🔗 Token store: Redis');
 } else {
@@ -66,7 +65,7 @@ if (REDIS_URL) {
     async saveToken(shop, token) { mem.set(shop, token); shops.add(shop); },
     async getToken(shop) { return mem.get(shop); },
     async deleteToken(shop) { mem.delete(shop); shops.delete(shop); },
-    async listShops() { return Array.from(shops); }
+    async listShops() { return Array.from(shops); },
   };
   console.log('💾 Token store: In-memory (set REDIS_URL to persist)');
 }
@@ -100,12 +99,12 @@ app.use((req, res, next) => {
 });
 
 // ---------- Helpers ----------
-const normalize = (s) => (s || '').trim().toLowerCase();
-const normalizeZip = (s) => (s || '').replace(/\s/g, '').trim().toLowerCase();
-const cleanOrderNumber = (n) => (n || '').toString().replace(/^#/, '');
+const normalize     = (s) => (s || '').trim().toLowerCase();
+const normalizeZip  = (s) => (s || '').replace(/\s/g, '').trim().toLowerCase();
+const cleanOrderNum = (n) => (n || '').toString().replace(/^#/, '');
 
 // ---------- Rate limiting (Redis or memory) ----------
-const memRl = new Map(); // memory fallback bucket
+const memRl = new Map();
 function makeLimiter({ name, windowSec, max, keyFn }) {
   return async (req, res, next) => {
     try {
@@ -151,7 +150,7 @@ const rateById = makeLimiter({
   max: parseInt(RATE_ID_MAX_PER_HOUR, 10),
   keyFn: (req) => {
     const b = req.body || {};
-    return `${b.shop || ''}:${cleanOrderNumber(b.orderNumber || '')}:${normalize(b.emailOrZip || '')}`;
+    return `${b.shop || ''}:${cleanOrderNum(b.orderNumber || '')}:${normalize(b.emailOrZip || '')}`;
   }
 });
 
@@ -181,9 +180,11 @@ app.get('/auth/callback', async (req, res) => {
     await store.saveToken(session.shop, session.accessToken);
     console.log(`✅ Installed on ${session.shop}. Token saved.`);
 
-    // Register uninstall webhook
+    // Register uninstall webhook (extra logs)
     try {
       const webhookUrl = `${HOST.replace(/\/$/, '')}/webhooks/app-uninstalled`;
+      console.log('Registering uninstall webhook at:', webhookUrl);
+
       const r = await fetch(`https://${session.shop}/admin/api/${LATEST_API_VERSION}/webhooks.json`, {
         method: 'POST',
         headers: {
@@ -192,11 +193,12 @@ app.get('/auth/callback', async (req, res) => {
         },
         body: JSON.stringify({ webhook: { topic: 'app/uninstalled', address: webhookUrl, format: 'json' } }),
       });
+
+      const t = await r.text();
       if (!r.ok) {
-        const t = await r.text();
         console.warn('Webhook register failed:', r.status, t);
       } else {
-        console.log('✅ app/uninstalled webhook registered for', session.shop);
+        console.log('✅ app/uninstalled webhook registered for', session.shop, '->', webhookUrl);
       }
     } catch (e) {
       console.warn('Webhook register error:', e.message);
@@ -217,19 +219,23 @@ app.get('/installed', (req, res) => {
 // ---------- Webhooks ----------
 app.post('/webhooks/app-uninstalled', async (req, res) => {
   try {
+    const shopHdr = req.get('X-Shopify-Shop-Domain') || '';
+    const topic   = req.get('X-Shopify-Topic') || '';
+    console.log('↘️  Received webhook:', topic, 'from', shopHdr);
+
     const hmac = req.get('X-Shopify-Hmac-Sha256') || '';
-    const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+    const raw  = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
     const digest = crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(raw).digest('base64');
-    const safeEq = (a, b) => {
-      const ab = Buffer.from(a), bb = Buffer.from(b);
-      return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
-    };
-    if (!safeEq(digest, hmac)) {
+
+    // constant-time comparison
+    const a = Buffer.from(digest);
+    const b = Buffer.from(hmac);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       console.warn('⚠️ Invalid webhook HMAC');
       return res.sendStatus(401);
     }
 
-    const shop = (req.get('X-Shopify-Shop-Domain') || '').toString();
+    const shop = shopHdr.toString();
     if (shop) {
       await store.deleteToken(shop);
       console.log('🧹 Token deleted for', shop);
@@ -237,8 +243,25 @@ app.post('/webhooks/app-uninstalled', async (req, res) => {
     res.sendStatus(200);
   } catch (e) {
     console.error('Uninstall webhook error:', e);
-    // Still 200 to prevent Shopify retries; we logged the error.
-    res.sendStatus(200);
+    res.sendStatus(200); // still 200 to avoid Shopify retries
+  }
+});
+
+// List webhooks for a shop (debug)
+app.get('/api/debug/webhooks', async (req, res) => {
+  try {
+    const shop = (req.query.shop || '').toString();
+    if (!shop) return res.status(400).json({ error: 'missing shop' });
+    const token = await store.getToken(shop);
+    if (!token) return res.status(401).json({ error: 'no token saved for this shop' });
+
+    const r = await fetch(`https://${shop}/admin/api/${LATEST_API_VERSION}/webhooks.json`, {
+      headers: { 'X-Shopify-Access-Token': token }
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -278,7 +301,7 @@ app.post('/api/validate-order', rateByIP, rateById, async (req, res) => {
       return res.status(401).json({ error: `Shop ${shop} not authorized. Visit ${HOST}/auth?shop=${shop}` });
     }
 
-    const cleaned = cleanOrderNumber(orderNumber);
+    const cleaned = cleanOrderNum(orderNumber);
     let order = null;
 
     const doSearch = async (name) => {
