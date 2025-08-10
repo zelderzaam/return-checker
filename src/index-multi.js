@@ -129,6 +129,8 @@ app.get('/auth/callback', async (req, res) => {
 app.get('/installed', (req, res) => {
   const shop = req.query.shop;
   res.send(`✅ Installed on ${shop}. Token saved. You can now use the API.`);
+});
+
 
 // ---------- API ----------
 app.get('/api/health', async (req, res) => {
