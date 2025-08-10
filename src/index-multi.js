@@ -15,21 +15,19 @@ const {
   SCOPES,
   HOST,
   PORT = 3000,
-  REDIS_URL, // <— add this in Render env
+  REDIS_URL,             // set this in Render
+  ALLOWED_ORIGINS = ""   // set this in Render (comma-separated)
 } = process.env;
 
-// Fail fast if env is missing
-['SHOPIFY_API_KEY', 'SHOPIFY_API_SECRET', 'SCOPES', 'HOST'].forEach((k) => {
+// ---- Missing envs (log only) ----
+['SHOPIFY_API_KEY', 'SHOPIFY_API_SECRET', 'SCOPES', 'HOST'].forEach(k => {
   if (!process.env[k]) console.error(`❌ Missing env: ${k}`);
 });
 
-// ---------- Token Store (Redis if available; memory fallback) ----------
+// ---- Token Store (Redis if available; memory fallback) ----
 let store;
 if (REDIS_URL) {
-  const redis = new Redis(REDIS_URL, {
-    // Using internal redis:// on Render (no TLS). If you ever use rediss://, TLS is automatic.
-    lazyConnect: true,
-  });
+  const redis = new Redis(REDIS_URL, { lazyConnect: true });
   redis.on('error', (e) => console.error('Redis error:', e));
 
   store = {
@@ -42,28 +40,21 @@ if (REDIS_URL) {
     },
     async listShops() {
       return redis.smembers('shops');
-    },
+    }
   };
   console.log('🔗 Token store: Redis');
 } else {
   const mem = new Map();
   const shops = new Set();
   store = {
-    async saveToken(shop, token) {
-      mem.set(shop, token);
-      shops.add(shop);
-    },
-    async getToken(shop) {
-      return mem.get(shop);
-    },
-    async listShops() {
-      return Array.from(shops);
-    },
+    async saveToken(shop, token) { mem.set(shop, token); shops.add(shop); },
+    async getToken(shop) { return mem.get(shop); },
+    async listShops() { return Array.from(shops); }
   };
   console.log('💾 Token store: In-memory (set REDIS_URL to persist)');
 }
 
-// Shopify SDK init
+// ---- Shopify SDK init ----
 const hostName = (HOST || process.env.RENDER_EXTERNAL_URL || '')
   .replace(/^https?:\/\//, '')
   .replace(/\/$/, '');
@@ -71,27 +62,35 @@ const hostName = (HOST || process.env.RENDER_EXTERNAL_URL || '')
 const shopify = shopifyApi({
   apiKey: SHOPIFY_API_KEY,
   apiSecretKey: SHOPIFY_API_SECRET,
-  scopes: (SCOPES || '').split(',').map((s) => s.trim()).filter(Boolean),
+  scopes: (SCOPES || '').split(',').map(s => s.trim()).filter(Boolean),
   hostName,
   apiVersion: LATEST_API_VERSION,
   isEmbeddedApp: false,
 });
 
-// CORS (simple)
+// ---- CORS (allow-list) ----
+const ORIGINS = ALLOWED_ORIGINS.split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = req.headers.origin;
+  res.setHeader('Vary', 'Origin');
+  if (origin && ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
-// Helpers
-const normalize = (s) => (s || '').trim().toLowerCase();
-const normalizeZip = (s) => (s || '').replace(/\s/g, '').trim().toLowerCase();
-const cleanOrderNumber = (n) => (n || '').toString().replace(/^#/, '');
+// ---- Helpers ----
+const normalize     = (s) => (s || '').trim().toLowerCase();
+const normalizeZip  = (s) => (s || '').replace(/\s/g, '').trim().toLowerCase();
+const cleanOrderNum = (n) => (n || '').toString().replace(/^#/, '');
 
-// ---------- OAuth ----------
+// ---- OAuth ----
 app.get('/auth', async (req, res) => {
   try {
     const shop = (req.query.shop || '').toString();
@@ -117,7 +116,7 @@ app.get('/auth/callback', async (req, res) => {
       rawRequest: req,
       rawResponse: res,
     });
-    await store.saveToken(session.shop, session.accessToken); // <— now async
+    await store.saveToken(session.shop, session.accessToken);
     console.log(`✅ Installed on ${session.shop}. Token saved.`);
     res.redirect(`/installed?shop=${encodeURIComponent(session.shop)}`);
   } catch (e) {
@@ -131,15 +130,10 @@ app.get('/installed', (req, res) => {
   res.send(`✅ Installed on ${shop}. Token saved. You can now use the API.`);
 });
 
-
-// ---------- API ----------
+// ---- API ----
 app.get('/api/health', async (req, res) => {
   let installedShops = [];
-  try {
-    installedShops = await store.listShops();
-  } catch (e) {
-    console.warn('listShops failed:', e.message);
-  }
+  try { installedShops = await store.listShops(); } catch {}
   res.json({
     status: 'healthy',
     time: new Date().toISOString(),
@@ -149,6 +143,7 @@ app.get('/api/health', async (req, res) => {
       host: HOST,
       scopes: SCOPES,
       redis: !!REDIS_URL,
+      allowedOrigins: ORIGINS,
     },
     installedShops,
   });
@@ -164,12 +159,12 @@ app.post('/api/validate-order', async (req, res) => {
       return res.status(400).json({ error: 'Missing fields: orderNumber, emailOrZip' });
     }
 
-    const accessToken = await store.getToken(shop); // <— now async
+    const accessToken = await store.getToken(shop);
     if (!accessToken) {
       return res.status(401).json({ error: `Shop ${shop} not authorized. Visit ${HOST}/auth?shop=${shop}` });
     }
 
-    const cleaned = cleanOrderNumber(orderNumber);
+    const cleaned = cleanOrderNum(orderNumber);
     let order = null;
 
     const doSearch = async (name) => {
@@ -190,27 +185,24 @@ app.post('/api/validate-order', async (req, res) => {
     try {
       const data = await doSearch('#' + cleaned);
       if (data.orders?.length) order = data.orders[0];
-    } catch (e) {
-      console.log('Name search (#) failed:', e.message);
-    }
+    } catch (e) { console.log('Name search (#) failed:', e.message); }
+
     if (!order) {
       try {
         const data = await doSearch(cleaned);
         if (data.orders?.length) order = data.orders[0];
-      } catch (e) {
-        console.log('Name search (no #) failed:', e.message);
-      }
+      } catch (e) { console.log('Name search (no #) failed:', e.message); }
     }
 
     if (!order) return res.json({ found: false, reason: 'order_not_found' });
 
     const orderEmail = normalize(order.email);
-    const orderZip = normalizeZip(order.shipping_address?.zip);
-    const emailIn = normalize(emailOrZip);
-    const zipIn = normalizeZip(emailOrZip);
+    const orderZip   = normalizeZip(order.shipping_address?.zip);
+    const emailIn    = normalize(emailOrZip);
+    const zipIn      = normalizeZip(emailOrZip);
 
     const emailMatch = orderEmail && orderEmail === emailIn;
-    const zipMatch = orderZip && orderZip === zipIn;
+    const zipMatch   = orderZip && orderZip === zipIn;
 
     res.json({
       found: !!(emailMatch || zipMatch),
@@ -224,7 +216,7 @@ app.post('/api/validate-order', async (req, res) => {
   }
 });
 
-// ---------- Root ----------
+// ---- Root ----
 // If Shopify opens App URL with ?shop=..., kick off OAuth. Otherwise show info.
 app.get('/', (req, res) => {
   const shop = (req.query.shop || '').toString();
