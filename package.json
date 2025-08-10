@@ -1,12 +1,20 @@
 {
-  "name": "return-checker",
+  "name": "shopify-return-checker",
   "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "render-build": "echo \"no build step\""
   },
   "dependencies": {
-    "axios": "^1.11.0",
-    "express": "^5.1.0"
+    "@shopify/shopify-api": "^11.4.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }
