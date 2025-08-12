@@ -364,7 +364,7 @@ app.post('/api/validate-order', rateByIP, rateById, async (req, res) => {
   }
 });
 
-// ---------- New: store a return request ----------
+// ---------- Create + index a return request ----------
 app.post('/api/start-return', rateByIP, async (req, res) => {
   try {
     const { shop, orderNumber, emailOrZip, selected, reason } = req.body || {};
@@ -382,23 +382,77 @@ app.post('/api/start-return', rateByIP, async (req, res) => {
       id,
       createdAt: new Date().toISOString(),
       shop,
-      orderNumber,
+      orderNumber: String(orderNumber),
       emailOrZip,
       selected,   // [{ lineItemId, quantity, title, variantTitle }]
-      reason
+      reason,
+      status: 'requested'
     };
 
     if (redis) {
       await redis.set(`return:req:${id}`, JSON.stringify(record), 'EX', 60 * 60 * 24 * 30); // 30 days
       await redis.lpush('return:req:index', id);
+      // 👇 index by shop+order for fast lookup on Order status page
+      await redis.lpush(`return:req:byOrder:${shop}:${record.orderNumber}`, id);
     } else {
       global.__returns = global.__returns || new Map();
       global.__returns.set(id, record);
+      // simple in-memory index
+      global.__returnsIndex = global.__returnsIndex || new Map();
+      const key = `${shop}:${record.orderNumber}`;
+      const arr = global.__returnsIndex.get(key) || [];
+      arr.unshift(id);
+      global.__returnsIndex.set(key, arr);
     }
 
     res.json({ ok: true, id });
   } catch (e) {
     console.error('start-return error:', e);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// ---------- Read return requests by order ----------
+app.get('/api/returns/by-order', async (req, res) => {
+  try {
+    const shop = (req.query.shop || '').toString();
+    const orderNumber = (req.query.orderNumber || '').toString();
+
+    if (!shop || !orderNumber) {
+      return res.status(400).json({ error: 'missing_params' });
+    }
+
+    // Optional guard: only respond if shop has an auth token saved
+    const token = await store.getToken(shop);
+    if (!token) return res.status(401).json({ error: 'shop_not_authorized' });
+
+    let requests = [];
+
+    if (redis) {
+      const listKey = `return:req:byOrder:${shop}:${orderNumber}`;
+      const ids = await redis.lrange(listKey, 0, -1);
+      if (ids.length) {
+        const pipe = redis.pipeline();
+        ids.forEach(id => pipe.get(`return:req:${id}`));
+        const results = await pipe.exec();
+        requests = results
+          .map(([, val]) => { try { return JSON.parse(val); } catch { return null; } })
+          .filter(Boolean);
+      }
+    } else {
+      const key = `${shop}:${orderNumber}`;
+      const idx = (global.__returnsIndex && global.__returnsIndex.get(key)) || [];
+      requests = (idx || []).map(id => global.__returns.get(id)).filter(Boolean);
+      if (!requests.length && global.__returns) {
+        // fallback scan
+        requests = [...global.__returns.values()]
+          .filter(r => r.shop === shop && String(r.orderNumber) === String(orderNumber));
+      }
+    }
+
+    res.json({ shop, orderNumber, count: requests.length, requests });
+  } catch (e) {
+    console.error('by-order error:', e);
     res.status(500).json({ error: 'internal_error' });
   }
 });
@@ -416,6 +470,7 @@ app.get('/', (req, res) => {
       callback: 'GET /auth/callback',
       validate: 'POST /api/validate-order',
       startReturn: 'POST /api/start-return',
+      returnsByOrder: 'GET /api/returns/by-order?shop=<...>&orderNumber=<...>',
       health: 'GET /api/health',
     },
   });
