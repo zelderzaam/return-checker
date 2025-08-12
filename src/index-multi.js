@@ -1,4 +1,4 @@
-// index-multi.js (Multi-store Shopify OAuth app)
+// src/index-multi.js
 require('dotenv').config();
 require('@shopify/shopify-api/adapters/node');
 
@@ -180,7 +180,7 @@ app.get('/auth/callback', async (req, res) => {
     await store.saveToken(session.shop, session.accessToken);
     console.log(`✅ Installed on ${session.shop}. Token saved.`);
 
-    // Register uninstall webhook (extra logs)
+    // Register uninstall webhook
     try {
       const webhookUrl = `${HOST.replace(/\/$/, '')}/webhooks/app-uninstalled`;
       console.log('Registering uninstall webhook at:', webhookUrl);
@@ -195,11 +195,8 @@ app.get('/auth/callback', async (req, res) => {
       });
 
       const t = await r.text();
-      if (!r.ok) {
-        console.warn('Webhook register failed:', r.status, t);
-      } else {
-        console.log('✅ app/uninstalled webhook registered for', session.shop, '->', webhookUrl);
-      }
+      if (!r.ok) console.warn('Webhook register failed:', r.status, t);
+      else console.log('✅ app/uninstalled webhook registered for', session.shop, '->', webhookUrl);
     } catch (e) {
       console.warn('Webhook register error:', e.message);
     }
@@ -367,6 +364,45 @@ app.post('/api/validate-order', rateByIP, rateById, async (req, res) => {
   }
 });
 
+// ---------- New: store a return request ----------
+app.post('/api/start-return', rateByIP, async (req, res) => {
+  try {
+    const { shop, orderNumber, emailOrZip, selected, reason } = req.body || {};
+
+    if (!shop || !orderNumber || !Array.isArray(selected) || selected.length === 0) {
+      return res.status(400).json({ error: 'missing_fields' });
+    }
+
+    // Optional: ensure shop is authorized
+    const token = await store.getToken(shop);
+    if (!token) return res.status(401).json({ error: 'shop_not_authorized' });
+
+    const id = crypto.randomUUID();
+    const record = {
+      id,
+      createdAt: new Date().toISOString(),
+      shop,
+      orderNumber,
+      emailOrZip,
+      selected,   // [{ lineItemId, quantity, title, variantTitle }]
+      reason
+    };
+
+    if (redis) {
+      await redis.set(`return:req:${id}`, JSON.stringify(record), 'EX', 60 * 60 * 24 * 30); // 30 days
+      await redis.lpush('return:req:index', id);
+    } else {
+      global.__returns = global.__returns || new Map();
+      global.__returns.set(id, record);
+    }
+
+    res.json({ ok: true, id });
+  } catch (e) {
+    console.error('start-return error:', e);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
+
 // ---------- Root ----------
 app.get('/', (req, res) => {
   const shop = (req.query.shop || '').toString();
@@ -379,6 +415,7 @@ app.get('/', (req, res) => {
       auth: 'GET /auth?shop=<shop>.myshopify.com',
       callback: 'GET /auth/callback',
       validate: 'POST /api/validate-order',
+      startReturn: 'POST /api/start-return',
       health: 'GET /api/health',
     },
   });
