@@ -227,7 +227,6 @@ app.post('/webhooks/app-uninstalled', async (req, res) => {
     const raw  = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
     const digest = crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(raw).digest('base64');
 
-    // constant-time comparison
     const a = Buffer.from(digest);
     const b = Buffer.from(hmac);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
@@ -304,8 +303,11 @@ app.post('/api/validate-order', rateByIP, rateById, async (req, res) => {
     const cleaned = cleanOrderNum(orderNumber);
     let order = null;
 
+    // include line_items + id so we can build the selection UI
     const doSearch = async (name) => {
-      const url = `https://${shop}/admin/api/${LATEST_API_VERSION}/orders.json?name=${encodeURIComponent(name)}&status=any&fields=name,email,shipping_address`;
+      const url = `https://${shop}/admin/api/${LATEST_API_VERSION}/orders.json?` +
+                  `name=${encodeURIComponent(name)}&status=any&` +
+                  `fields=name,email,shipping_address,line_items,id`;
       const resp = await fetch(url, {
         headers: {
           'X-Shopify-Access-Token': accessToken,
@@ -341,11 +343,23 @@ app.post('/api/validate-order', rateByIP, rateById, async (req, res) => {
     const emailMatch = orderEmail && orderEmail === emailIn;
     const zipMatch   = orderZip && orderZip === zipIn;
 
+    // minimal items payload for the UI
+    const items = Array.isArray(order.line_items) ? order.line_items.map(li => ({
+      id: li.id,
+      productId: li.product_id,
+      variantId: li.variant_id,
+      title: li.title,
+      variantTitle: li.variant_title || '',
+      sku: li.sku || '',
+      quantity: li.quantity
+    })) : [];
+
     res.json({
       found: !!(emailMatch || zipMatch),
       emailMatch,
       zipMatch,
-      order: { name: order.name, hasEmail: !!order.email, hasZip: !!order.shipping_address?.zip },
+      order: { id: order.id, name: order.name, hasEmail: !!order.email, hasZip: !!order.shipping_address?.zip },
+      items
     });
   } catch (err) {
     console.error('validate-order error:', err);
